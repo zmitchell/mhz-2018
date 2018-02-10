@@ -572,16 +572,18 @@ RETURN
 
 
 ////////////////////////////////////////////////////////////////////////////////
-//
-// Running scans
-//
+//                                                                            //
+// Scanning                                                                   //
+//                                                                            //
 ////////////////////////////////////////////////////////////////////////////////
 
 Scan:
+
+// Create scan dialog window
+DIALOG 0,0,0,0,"Scan setup:"
 x = 5
 y = 5
 h = 29
-DIALOG 0,0,0,0,"Scan setup:"
 
 STATIC x,y,200,h,"X-axis scan param:"
 y = y+h+3
@@ -657,13 +659,29 @@ EDIT x+200+105,y,60,h,ScanSpecX2
 
 END
 
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub DialogCancelButton
+//     @unsure
+//
+////////////////////////////////////////////////////////////////////////////////
+
 DialogCancelButton:
 GOSUB LoadScanPars
 RETURN
 
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub DialogScanButton
+//     @unsure
+//
+////////////////////////////////////////////////////////////////////////////////
+
 DialogScanButton:
 GOSUB SaveScanPars
 GOSUB MakeScanX
+
+// The user can enter bogus scan parameters, so check them before continuing.
 IF len<0;
 +   GOTO Scan;
 IF len>10000;
@@ -684,7 +702,6 @@ IF ScanSpecInstr<0;
 IF ScanSpecInstr>AMOUNT;
 +   MESSAGEBOX "Scan parameter error","Intrument Spectrum # out of range!",0;
 +   GOTO Scan
-
 IF ScanSpecX1>Amount;
 +   ScanSpecX1 = 0
 IF ScanSpecX1<1;
@@ -694,33 +711,36 @@ IF ScanSpecX2>Amount;
 IF ScanSpecX2<1;
 +   ScanSpecX2 = 0
 
+// Initialize the spectra that will hold the signal and the instrument function.
 spec1 = ScanSpecDA;
 len1 = 0
 len1 = len
-setx spec1,AcqX
+SETX spec1,AcqX
 spec2 = ScanSpecInstr
-spectra spec2 = spec1
-
+SPECTRA spec2 = spec1
 IF ScanSpecX1>0;
 +   spec3 = ScanSpecX1;
-+   spectra spec3 = spec1
++   SPECTRA spec3 = spec1
 IF ScanSpecX2>0;
 +   spec4 = ScanSpecX2;
-+   spectra spec4 = spec1
++   SPECTRA spec4 = spec1
 
 PRINT "\nAccumulating into ",spec1," and ",spec2,", channels = ",len1
 
+// Disable the widgets in the control window.
 EnableControl = 0
 GOSUB EnableControl
 
-// get background
-
+// Send the delay line to the first position of the scan.
 xpos = Specx1(1)
 DelayNewPos = xpos
 DelayNewPos$ = xpos
 GOSUB DelayGo
 PRINT "\nMoving to starting position ",DelayNewPos
 
+// "AccuBack" is the time to accumulate the background as set by the user.
+// If the user enters zero or less, then no background corrections will
+// be made.
 IF AccuBack<=0;
 +   AccuT = 0;
 +   AcqSb = 0;
@@ -729,10 +749,15 @@ IF AccuBack<=0;
 +   Acq3b = 0;
 +   PRINT "\nNo Background selected";
 +   GOTO SKIPBACK
-print "\nClose Shutter and wait 3 seconds..."
+
+// @todo: Wait for the delay line to reach its destination before collecting
+//        the background.
+
+print "\nClose Shutter and wait for LIA to settle..."
 Shutter = 0
 GOSUB ShutterOpen
 ShutterButton$ = "Shutter Closed"
+
 tw = clock() + 3000  // wait 3 seconds: note - set time RC to 0.3 seconds
 
 waitb1:
@@ -742,8 +767,8 @@ if clock()<tw;
 if ButtonStop>0;
 +   RETURN
 
-// measure background with closed shutter FOR AccuBack seconds
-print "\nMeasuring background FOR ",AccuBack," seconds..."
+// Measure background with closed shutter.
+print "\nMeasuring background for ",AccuBack," seconds..."
 AccuT = AccuBack
 GOSUB Accumulate
 AcqSb = AcqS
@@ -765,6 +790,7 @@ AverX1 = 0
 AverX2 = 0
 chan = 1
 
+// Send the delay line to its next position.
 newchan:
 xpos = Specx1(chan)
 if chan>1;
@@ -773,6 +799,7 @@ if chan>1;
 +   GOSUB DelayGo
 print "\nChannel ",chan," at ",xpos," ps..."
 
+// @todo: Make sure that you can stop the delay line somewhere in here.
 wait1:
 IF clock()<tw;
 +   IF ButtonStop = 0;
@@ -784,17 +811,18 @@ DelayCurPos$ = -DelayPos
 if Moving>0;
 +   tw = clock() + 20;
 +   GOTO wait1
-if Log = 10;
-+   PRINT #9,"\n*** CHAN = ",chan,"  X = ",xpos;
-+   Log = 10
+
+// Collect the current data point.
 AccuT = AcqT(chan)
 print "averaging"
 GOSUB Accumulate
+// Subtract the background.
 AcqS = AcqS - AcqSb
 Acq1 = Acq1 - Acq1b
 Acq2 = Acq2 - Acq2b
 Acq3 = Acq3 - Acq3b
 print "\n   [",m,"pts] ",AcqS,", ",Acq1,", ",Acq2,", ",Acq3
+// @unsure
 InstrDivK = 1
 if InstrDiv = 2;
 +   InstrDivK = Acq1 * Acq2
@@ -816,11 +844,13 @@ DAdivK = abs(DAdivK)
 if DAdivK<1e-10;
 +   DAdivK = 1
 
+// @unsure
 if chan = 1;
 +   IF SpecNorm>0;
 +       SpecNormDA = DAdivK;
 +       SpecNormInstr = InstrDivK
 
+// Store the collected data.
 Spec1(chan) = AcqS
 Spec2(chan)= Acq3 / InstrDivK * SpecNormInstr
 if ScanSpecX1>0;
@@ -831,6 +861,7 @@ AverX1 = AverX1 + Acq1
 AverX2 = AverX2 + Acq2
 REFRESH
 
+// Check whether we're at the end of the scan.
 chan = chan + 1
 IF chan<=len1;
 +   IF ButtonStop = 0;
@@ -843,6 +874,8 @@ IF chan<len1;
 +   len2 = chan
 EnableControl = 1
 GOSUB EnableControl
+
+// Assemble the comments to store in the spectra, and then store them.
 com$ = "\nLockIn sensitivity = ",LockSensitivity
 IF UseTemplate>0;
 +   com$ = com$,"\nX set by template",xTemplate,"\nChannel averaging = ",AcqT(1)," seconds"
@@ -861,16 +894,27 @@ IF ScanSpecX2>0;
 +   comment3$ = "X2: ",ScanComment$,com$
 REFRESH
 
+// Open the shutter and go back to zero
 Shutter = 1
 GOSUB ShutterOpen
 ShutterButton$ = "Shutter Open"
 DelayNewPos = 0
-DelayNewPos$ = 0
+DelayNewPos$ = 0  // @todo: maybe this is why the position sets itself to zero
 GOSUB DelayGo
 Moving1 = 1
+
 RETURN
 
-// *** support scan
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub DialogInfoButton
+//     Calculates and displays the time required to complete the scan.
+//
+// Args:
+//     @unsure @missing_description
+//
+////////////////////////////////////////////////////////////////////////////////
+
 DialogInfoButton:
 GOSUB MakeScanX
 msg$ = "There will be ",len," points\r\nAcquisition time about ",floor(TotalTime/6+.5)/10," + ",floor(TotalTime1/6+.5)/10," minutes"
@@ -878,21 +922,46 @@ MESSAGEBOX "Scan Info",msg$,0
 GOTO Scan
 RETURN
 
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub Accumulate
+//     Collect and average data for the specified period of time.
+//
+// Args:
+//     AccuT (float): The time to accumulate each parameter
+//     LockSlow @unsure
+//     @unsure
+//
+// Returns:
+//     AcqS (float): The averaged Q value from the LIA
+//     Acq1 (float): The averaged X1 value from the LIA
+//     Acq2 (float): The averaged X2 value from the LIA
+//     Acq3 (float): The averaged X3 value from the LIA
+//
+////////////////////////////////////////////////////////////////////////////////
+
 Accumulate:
-m = floor(AccuT * 4)
 AcqS = 0
 Acq1 = 0
 Acq2 = 0
 Acq3 = 0
+
+// @todo: this rounds down too much, should it round to the nearest integer?
+m = floor(AccuT * 4)
+
+// @unsure
 // take every 250 ms m times (one read of 4 numbers takes 220 ms)
 dtw_ls = 100
 if LockSlow = 1;
 +   dtw_ls = 250
 tw = clock() + dtw_ls
+
+// @unsure I think "m" is the number of milliseconds between readings
 m = floor(AccuT * 1000 / dtw_ls)
 if m<1;
 +   m = 1
 mm = 0
+
 GOSUB LockFlushFast
 send$ = "\n"
 GOSUB LockSend
@@ -904,24 +973,28 @@ ACCwait:
 if clock()<tw;
 +   IF ButtonStop = 0;
 +       GOTO ACCwait
+
 tw = clock() + dtw_ls
 if LockSlow = 1;
 +   GOSUB LockGetAll1
 if LockSlow = 0;
 +   GOSUB LockGetAll
 LockCurSignal = LockSignal
-if Log = 10;
-+   PRINT #9,"\nQ = ",LockSignal," X = ",LockX1,",",LockX2,",",LockX3,", T = ",clock()+dtw_ls-tw
-Stat$ = "RD",mm,":",LockSignal,",",LockX1,",",LockX2,",",LockX3," (",clock()+dtw_ls-tw,")"
+Stat$ = "RD",mm,"/",m,":",LockSignal,",",LockX1,",",LockX2,",",LockX3," (",clock() + dtw_ls - tw,")"
+
+// @unsure
 if clock()>ts;
 +   ts = clock()+dts;
 +   LockSignal$ = LockCurSignal * LockSignalMult
+
 GOSUB UpdateNeedle1
 LockSignal$ = LockCurSignal*LockSignalMult
 AcqS = AcqS + LockSignal
 Acq1 = Acq1 + LockX1
 Acq2 = Acq2 + LockX2
 Acq3 = Acq3 + LockX3
+
+// Proceed to the next accumulation increment if we're not done.
 mm = mm + 1
 if mm>=m;
 +   GOTO ACC2
@@ -929,6 +1002,7 @@ if ButtonStop>0;
 +   GOTO ACC2
 GOTO ACC1
 
+// Compute the average.
 ACC2:
 AcqS = AcqS / m
 Acq1 = Acq1 / m
