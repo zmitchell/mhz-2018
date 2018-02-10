@@ -1,3 +1,9 @@
+////////////////////////////////////////////////////////////////////////////////
+//
+// Program Settings
+//
+////////////////////////////////////////////////////////////////////////////////
+
 UseVBX=0		// Set to 0 to omit VBX controls, 1 to use them
 Debug=0		// Debug level (0 - none, 1-low, 2 -deep)
 StatLine=1		// status line length
@@ -20,11 +26,22 @@ StepperStep=0.1/300	// step in picoseconds per step of the delay line (half step
 			// I use opencom as #3
 LockSensitivity=1e4	// Set sensitivity of lockin in micro-dA units per V
 LockNeedleTau=250
-gosub LoadStepperPars	// overload defaults with saved ones (if exist) including port numbers !!!
 
+////////////////////////////////////////////////////////////////////////////////
+//
+// Load Saved Settings
+//
+////////////////////////////////////////////////////////////////////////////////
+
+gosub LoadStepperPars	// overload defaults with saved ones (if exist) including port numbers !!!
 Gosub SelectComPort
 
-//scan pars
+////////////////////////////////////////////////////////////////////////////////
+//
+// @unsure Set default scan parameters?
+//
+////////////////////////////////////////////////////////////////////////////////
+
 ScanTo=100
 ScanFs=7	// number of points where step can change
 dim ScanF(ScanFs)
@@ -50,6 +67,11 @@ AccuBack=3			// collect background 3 seconds (set to 0 not to compensate!)
 gosub LoadScanPars	// overload scan pars if exist
 //print "\n length=",ScanComment$(0),"\n"
 
+////////////////////////////////////////////////////////////////////////////////
+//
+// Connect to Equipment
+//
+////////////////////////////////////////////////////////////////////////////////
 
 //print " \n"		// funny but needed just like that to print in normal font size!
 text set size 10	// in some Windows systems default is 16!
@@ -70,6 +92,11 @@ gosub LockFlush
 //print "\n",tt
 //goto agaga
 
+////////////////////////////////////////////////////////////////////////////////
+//
+// Default values for control window widgets
+//
+////////////////////////////////////////////////////////////////////////////////
 
 LockScale=-1
 LockCurScale=-1
@@ -107,6 +134,12 @@ DelayNewPos$=DelayPos
 TTYlockin=0
 Stat$=""
 
+////////////////////////////////////////////////////////////////////////////////
+//
+// Control window layout
+//
+////////////////////////////////////////////////////////////////////////////////
+
 y=5
 h=29
 CONTROL OPEN 0,0,0,0,"Control Pump-Probe",exitIt
@@ -122,7 +155,7 @@ y=y+h+4
 
 //CONTROL ADD GROUPBOX 3,y,304,h*3+15,Dummy$,db
 
-y=y+7 
+y=y+7
 CONTROL ADD TEXT S=2,5,y+6,148,h-6,"Delay line position:"
 CONTROL ADD TEXT S=2,155,y+6,60,h-6,DelayCurPos$
 CONTROL ADD TEXT 235,y+6,20,h-6,"ps"
@@ -150,9 +183,14 @@ CONTROL ADD BUTTON 205,y,50,h,"Setup",ButtonMotor
 CONTROL ADD BUTTON 260,y,40,h,"Exit",ButtonExit
 
 y=y+h+3
-if StatLine>0;control add TEXT x,y,300,h-6,Stat$ 
+if StatLine>0;control add TEXT x,y,300,h-6,Stat$
 CONTROL SHOW
 
+////////////////////////////////////////////////////////////////////////////////
+//
+// Main loop update settings
+//
+////////////////////////////////////////////////////////////////////////////////
 dtc=200	// update all everything 200 ms
 dtn=50	// update needle every 50 ms
 dts=500	// update signal text only every 500 ms
@@ -161,6 +199,12 @@ tc=clock()
 tn=tc
 ts=tc
 tf=tc+dtf
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// Main loop
+//
+////////////////////////////////////////////////////////////////////////////////
 
 loop:
 if TTYlockin>0;gosub TTYlockin;TTYlockin=0
@@ -197,7 +241,11 @@ Moving1=Moving
 
 goto loop
 
-// ********* Subroutines for Control Box
+////////////////////////////////////////////////////////////////////////////////
+//
+// Control window subroutines
+//
+////////////////////////////////////////////////////////////////////////////////
 
 // Enable/disable controls while scanning
 EnableControl:
@@ -362,7 +410,12 @@ return
 // *** If someone closes CONTROL window
 ExitIt: ExitIt=1;return
 
-// **************** Initializing: select COM ports
+////////////////////////////////////////////////////////////////////////////////
+//
+// Selecting COM ports
+//
+////////////////////////////////////////////////////////////////////////////////
+
 SelectComPort:
 gosub LoadStepperPars
 StepperPortD=StepperPort
@@ -390,7 +443,11 @@ gosub SaveStepperPars
 return
 
 
-// ******* Scanning Routine *********
+////////////////////////////////////////////////////////////////////////////////
+//
+// Running scans
+//
+////////////////////////////////////////////////////////////////////////////////
 
 Scan:
 x=5;y=5;h=29
@@ -405,7 +462,7 @@ DIALOG 0,0,0,0,"Scan setup:"
     next
   edit x,y,70,h,ScanTo; static x+75,y+6,130,h-6,"<-Stop here"
 y=y+h+3
- 
+
 CheckBox x,y,290,h,"Use X-template instead from:",UseTemplate
 edit x+295,y,60,h,xTemplate
 y=y+h+3
@@ -421,8 +478,8 @@ x=x+250
 y=5
 static x,y,125,h,"Acquisition:"
 y=y+h+3
-static x,y+6,160,h-6,"deltaA signal:"; 
-static x+200,y+6,165,h-6,"Instrument signal"; 
+static x,y+6,160,h-6,"deltaA signal:";
+static x+200,y+6,165,h-6,"Instrument signal";
 
 y=y+h+3
 static x,y+6,100,h-6,"Spectrum=";  edit x+105,y,60,h,ScanSpecDA
@@ -490,7 +547,7 @@ if AccuBack<=0;AccuT=0;AcqSb=0;Acq1b=0;Acq2b=0;Acq3b=0;print "\nNo Background se
   tw=clock()+3000	// wait 3 seconds: note - set time RC to 0.3 seconds
   waitb1:  if clock()<tw;if ButtonStop=0;goto waitb1
   if ButtonStop>0;return
-  // measure background with closed shutter for AccuBack seconds 
+  // measure background with closed shutter for AccuBack seconds
   print "\nMeasuring background for ",AccuBack," seconds..."
   AccuT=AccuBack; gosub Accumulate
   AcqSb=AcqS
@@ -541,7 +598,7 @@ newchan:
   if DAdiv=4;DAdivK=Acq2*Acq2
   DAdivK=abs(DAdivK)
   if DAdivK<1e-10;DAdivK=1
-  
+
   if chan=1;if SpecNorm>0;SpecNormDA=DAdivK;SpecNormInstr=InstrDivK
 
 
@@ -554,11 +611,11 @@ newchan:
   AverX2=AverX2+Acq2
   refresh
   chan=chan+1
-  if chan<=len1;if ButtonStop=0;goto newchan 
+  if chan<=len1;if ButtonStop=0;goto newchan
 chan=chan-1	// last channel!
 AverX1=AverX1/chan
 AverX2=AverX2/chan
-if chan<len1;len1=chan;len2=chan  
+if chan<len1;len1=chan;len2=chan
 EnableControl=1;gosub EnableControl
 com$="\nLockIn sensitivity = ",LockSensitivity
 if UseTemplate>0;com$=com$,"\nX set by template",xTemplate,"\nChannel averaging = ",AcqT(1)," seconds"
@@ -578,7 +635,7 @@ return
 // *** support scan
 DialogInfoButton:
 gosub MakeScanX
-msg$="There will be ",len," points\r\nAcquisition time about ",floor(TotalTime/6+.5)/10," + ",floor(TotalTime1/6+.5)/10," minutes" 
+msg$="There will be ",len," points\r\nAcquisition time about ",floor(TotalTime/6+.5)/10," + ",floor(TotalTime1/6+.5)/10," minutes"
 MessageBox "Scan Info",msg$,0
 goto Scan
 return
@@ -613,7 +670,7 @@ ACC1:
     Acq3=Acq3+LockX3
     mm=mm+1
     if mm>=m; goto ACC2
-    if ButtonStop>0;goto ACC2 
+    if ButtonStop>0;goto ACC2
     goto ACC1
   ACC2:
     AcqS=AcqS/m
@@ -725,7 +782,12 @@ close 1
 return
 
 
-// ********************** stuff
+////////////////////////////////////////////////////////////////////////////////
+//
+// @unsure Interactively control the stepper motor?
+//
+////////////////////////////////////////////////////////////////////////////////
+
 u=0
 DelayNewPos=0
 gosub delayGo
@@ -749,9 +811,12 @@ print "  S=",LockSignal,",",x1,",",X2,",",x3
 goto again
 stopp
 
-// ************************************************************************************
-// ******************* Lock In control
-// ************************************************************************************
+////////////////////////////////////////////////////////////////////////////////
+//
+// Lock-in amplifier subroutines
+//
+////////////////////////////////////////////////////////////////////////////////
+
 // **** Open port and initialize
 LockInit:
 parity$="NONE";flow$="DTRDSR"
@@ -937,9 +1002,11 @@ send$="G",LockSetScale
 gosub LockSend
 return
 
-// ************************************************************************************
-// ********************* The commands to control delay line in ps units ***********
-// ************************************************************************************
+////////////////////////////////////////////////////////////////////////////////
+//
+// Delay line controls in time units
+//
+////////////////////////////////////////////////////////////////////////////////
 
 // ****** Shutter open or close (Shutter=1 or 0)
 ShutterOpen:
@@ -955,7 +1022,7 @@ return
 // ******* Check if delay line is Moving, (Moving=1 - moving, Moving=0 - stopped)
 DelayMoving:
 gosub StepperMoving
-return 
+return
 
 // *******Go to DelaynewPos in picoseconds
 DelayGo:
@@ -977,9 +1044,11 @@ gosub StepperSetOrigin
 return
 
 
-// ************************************************************************************
-// ********************* The commands to control stepper in native units ***********
-// *********************************************************************************
+////////////////////////////////////////////////////////////////////////////////
+//
+// Delay line controls in native units
+//
+////////////////////////////////////////////////////////////////////////////////
 
 // *************** Initialize stepper driver. Must do at least once
 StepperInit:
@@ -997,7 +1066,7 @@ gosub GetStepper
 print "...\n"
 gosub GetStepper
 print "...\n"
-gosub GetStepper 
+gosub GetStepper
 print "...\n"
 gosub StepperSetPars
 print "Done\n\n"
@@ -1076,7 +1145,7 @@ checka:
 if a=0;a=32
 return
 
-// ********* Flush input buffer from controller, just in case there is junk 
+// ********* Flush input buffer from controller, just in case there is junk
 StepperFlush:
 t=clock()+5	// wait no more than 5 ms for each symbol
 SF1:
@@ -1120,9 +1189,12 @@ if Moving=0;return
 if clock()<SST;goto SS1
 return
 
+////////////////////////////////////////////////////////////////////////////////
+//
+// Lock-in amplifier interactive commands (for debugging)
+//
+////////////////////////////////////////////////////////////////////////////////
 
-// ******************
-// DEBUG THE LOCKIN (manual commands):
 TTYlockin:
 print "\n\nCommand line mode for LockIn\nPress ESC to exit\n"
 localecho=1
