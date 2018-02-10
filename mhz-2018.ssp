@@ -1104,12 +1104,14 @@ GOTO again
 STOPP
 
 ////////////////////////////////////////////////////////////////////////////////
-//
-// Lock-in amplifier subroutines
-//
+//                                                                            //
+// Lock-in amplifier subroutines                                              //
+//                                                                            //
 ////////////////////////////////////////////////////////////////////////////////
 
-// **** Open port and initialize
+// sub LockInit
+//     Open a connection to the lock-in amplifier.
+
 LockInit:
 parity$ = "NONE"
 flow$ = "DTRDSR"
@@ -1131,40 +1133,74 @@ GOSUB LockSetWait
 PRINT "Done\n\n"
 RETURN
 
-// *************** Send string SEND$ to locker
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub LockSend
+//     Send a command to the LIA.
+//
+// Args:
+//     send$: The text to send to the LIA
+//
+////////////////////////////////////////////////////////////////////////////////
+
 LockSend:
 GOSUB LockFlushFast
 IF debug>0;
 +   PRINT "\nTo LockIn: [",send$,"]"
-PRINT #4,send$,"\n"
+PRINT #4,send$,"\n"  // note: #4 is the handle to the LIA COM port
 IF Log = 10;
 +   PRINT #9,"\nSend$ = ",Send$
 RETURN
 
-// *************** Send string SEND$ to locker and receives answer into LG$
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub LockSendR
+//     Send a command to the LIA and store the response.
+//
+// Args:
+//     send$: The text to send to the LIA
+//
+// Returns:
+//     LG$: The text received from the LIA
+//
+////////////////////////////////////////////////////////////////////////////////
+
 LockSendR:
 GOSUB LockSend
 GOSUB LockGet
 RETURN
 
-// ************** receives one line from LockIn, strips CRLF at end
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub LockGet
+//     Receives a single line from the LIA, stripping the CRLF from the end.
+//
+// Returns:
+//     LG$: The text received from the LIA
+//
+////////////////////////////////////////////////////////////////////////////////
+
 LockGet:
-LG$ = "                                                                                                                                     "; //buffer
+// build a buffer that is 200 characters long
+LG$ = ""
+FOR i=1,20
+    LG$ = LG$,"          "
+NEXT
 k = 0
 t = clock() + 250  // wait no more than 250 ms for each symbol
 
-LG1:
-f = filelen(4)
+lockGetNextResponseChar:
+f = filelen(4)  // note: 4 is the handle to the LIA COM port
 IF f>0;
 +   LOAD #4,unsigned1,a;
-+   k = k+1;
-+   LG$(k)=a;
-+   t = clock()+250;
++   k = k + 1;
++   LG$(k) = a;
++   t = clock() + 250;
 +   IF a<>13;
-+       GOTO LG1
++       GOTO lockGetNextResponseChar
 IF f<1;
 +   IF clock()<t;
-+       GOTO LG1
++       GOTO lockGetNextResponseChar
 LG$(k + 1) = 0
 IF LG$(k)=10;
 +   LG$(k)=0
@@ -1176,32 +1212,70 @@ IF Log = 10;
 +   PRINT #9," {",LG$,"}"
 RETURN
 
-// ************ Get lockin frequency into LockF
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub LockGetF
+//     Get the frequency from the LIA.
+//
+// Returns:
+//     LG$: The text received from the LIA
+//
+////////////////////////////////////////////////////////////////////////////////
+
 LockGetF:
 send$ = "F"
 GOSUB LockSendR
 LockF = LG$
 RETURN
 
-//************ Get lockIn signal into LockSignal
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub LockGetSignal
+//     Get the signal Q (quotient) from the LIA.
+//
+// Returns:
+//     LG$: The text received from the LIA
+//
+////////////////////////////////////////////////////////////////////////////////
+
 LockGetSignal:
 send$ = "Q"
 GOSUB LockSendR
 LockSignal = LG$
 RETURN
 
-// *************** Set lockin wait interval FOR chars in LockWait*4 ms (default 6)
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub LockSetWait
+//     Set the time between characters sent by the LIA.
+//
+//     The LIA is able to wait a specific amount of time between characters sent
+//     as part of a response. The time interval must be a multiple of 4ms, and
+//     has a default value of 6*4ms = 24ms.
+//
+// Args:
+//     LockWait (int): The number of 4ms intervals between characters in a
+//                     response from the LIA
+//
+////////////////////////////////////////////////////////////////////////////////
+
 LockSetWait:
 send$ = "W",LockWait
 GOSUB LockSend
 RETURN
 
-// **************** Flush LockIn receiver buffer in case there is junk
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub LockFlush
+//     Flush the receiving buffer of the LIA COM port.
+//
+////////////////////////////////////////////////////////////////////////////////
+
 LockFlush:
-t = clock() + 5  // wait no more than 5 ms FOR each symbol
+t = clock() + 5  // wait no more than 5 ms for each symbol
 
 LF1:
-f = filelen(4)
+f = filelen(4)  // note: 4 is the handle of the LIA COM port
 IF f>0;
 +   LOAD #4,unsigned1,a;
 +   t = clock()+5;
@@ -1210,7 +1284,13 @@ IF clock()<t;
 +   GOTO LF1
 RETURN
 
-// **************** Flush LockIn receiver buffer in case there is junk
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub LockFlush
+//     @unsure @missing_description
+//
+////////////////////////////////////////////////////////////////////////////////
+
 LockFlushFast:
 
 LFF1:
@@ -1221,12 +1301,19 @@ IF f>0;
 +   GOTO LFF1
 RETURN
 
-// **************** Flush LockIn receiver buffer in case there is junk
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub LockFlushLong
+//     Flush the receiving buffer of the LIA COM port using a longer wait
+//     time between characters.
+//
+////////////////////////////////////////////////////////////////////////////////
+
 LockFlushLong:
 t = clock() + 20  // wait no more than 20 ms FOR each symbol
 
 LFL1:
-f = filelen(4)
+f = filelen(4)  // note: 4 is the handle of the LIA COM port
 IF f>0;
 +   LOAD #4,unsigned1,a;
 +   t = clock() + 20;
@@ -1235,7 +1322,19 @@ IF clock()<t;
 +   GOTO LFL1
 RETURN
 
-//************ get lockIn Signal, X1, X2 and X3 inputs with error detection
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub LockGetAll
+//     Get all four signals (Q, X1, X2, X3) from the LIA.
+//
+// Returns:
+//     LockSignal (float): The LIA signal Q
+//     LockX1 (float): The voltage from LIA input X1
+//     LockX2 (float): The voltage from LIA input X2
+//     LockX3 (float): The voltage from LIA input X3
+//
+////////////////////////////////////////////////////////////////////////////////
+
 LockGetAll:
 LGAn = 0
 
@@ -1244,7 +1343,7 @@ LGAe = 0
 send$ = "Q;X1;X2;X3"
 GOSUB LockSendR
 LockSignal = LG$
-LGAe = LG$(0)
+LGAe = LG$(0)  // @unsure
 GOSUB LockGet
 LockX1 = LG$
 LGAe = LGAe*LG$(0)
@@ -1270,6 +1369,7 @@ GOSUB LockFlushLong
 GOTO LockGetAllagain
 RETURN
 
+// This appears to be a helper subroutine that gets the signals one at a time
 LockGetAll1:
 GOSUB LockGetSignal
 send$ = "X1"
@@ -1283,7 +1383,26 @@ GOSUB LockSendR
 LockX3 = LG$
 RETURN
 
-////************ Get lockIn scale into LockScale
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub LockGetScale
+//     Get the LIA scale (sensitivity).
+//
+//     The sensitivity of the LIA follows the pattern 1,2,5 to some power of
+//     10 followed by an associated unit (nV, uV, mV). The sensitivity is
+//     reported as an integer "n" that ranges from 1 to 24 that cycles through
+//     the various combinations of the span (1, 2, or 5), and the multiplier
+//     (the power of 10).
+//
+// Returns:
+//     LockScaleSpan (int): The significant digits of the sensitivity
+//     LockScaleMult (float): The multiplier for the sensitivity
+//     LockSignalUnit$ (string): The unit associated with the sensitivity
+//     LockSignalMult (float): The multiplier for display purposes
+//     LockScaleDelta (int): @unsure @missing_description
+//
+////////////////////////////////////////////////////////////////////////////////
+
 LockGetScale:
 GOSUB LockFlush
 send$ = "G"
@@ -1455,7 +1574,16 @@ IF LockScaleSpan = 5;
 +   LockScaleDelta = 1
 RETURN
 
-// *********** Set sensitivity to LockSetScale =4...24
+////////////////////////////////////////////////////////////////////////////////
+//
+// sub LockSetScale
+//     Set the sensitivity of the LIA.
+//
+// Args:
+//     n (int): The index of the desired sensitivity (see the LIA manual)
+//
+////////////////////////////////////////////////////////////////////////////////
+
 LockSetScale:
 IF LockSetScale<4;
 +   LockSetScale = 4
