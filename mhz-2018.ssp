@@ -1,0 +1,1142 @@
+UseVBX=0		// Set to 0 to omit VBX controls, 1 to use them
+Debug=0		// Debug level (0 - none, 1-low, 2 -deep)
+StatLine=1		// status line length
+
+Log=10
+Log$="pprobe.log"
+if Log>0;openp Log$ output #9;print #9,"\n******************************************************"
+LockSlow=0		// Get Q,x1,x2,x3 from LockIn in one command (0) or separately (1)
+
+StepperPort=8	// Com Port number to which the stepper controller is connected
+LockPort=9		// Com Port number to which LockIn is connected
+
+StepperWait=0.3	//switch to low power in 0.3 seconds after moving is over
+StepperDiv=4		// stepper internal speed divider
+StepperLow=600	// set start speed in Hz
+StepperHigh=4400	// Set max stepper speed in Hz (assume half step operation
+StepperAccel=20	// Stepper acceleration (8 stalls)
+StepperDecel=10	// Stepper deceleration
+StepperStep=0.1/300	// step in picoseconds per step of the delay line (half step, 0.05 micron)
+			// I use opencom as #3
+LockSensitivity=1e4	// Set sensitivity of lockin in micro-dA units per V
+LockNeedleTau=250
+gosub LoadStepperPars	// overload defaults with saved ones (if exist) including port numbers !!!
+
+Gosub SelectComPort
+
+//scan pars
+ScanTo=100
+ScanFs=7	// number of points where step can change
+dim ScanF(ScanFs)
+dim ScanS(ScanFs)
+dim ScanT(ScanFs)
+for i=1,ScanFs
+ ScanF(i)=0
+ ScanS(i)=0
+ ScanT(i)=0
+ next
+DAdiv=1
+InstrDiv=1
+UseTemplate=0
+xtemplate=1
+ScanSpecDA=1
+ScanSpecInstr=0
+ScanSpecX1=0
+ScanSpecX2=0
+SpecNorm=0
+ScanComment$=""
+AccuBack=3			// collect background 3 seconds (set to 0 not to compensate!)
+//print "\nload"
+gosub LoadScanPars	// overload scan pars if exist
+//print "\n length=",ScanComment$(0),"\n"
+
+
+//print " \n"		// funny but needed just like that to print in normal font size!
+text set size 10	// in some Windows systems default is 16!
+//t=clock()+100
+//wt:if clock()<t;goto wt
+print "Connecting: Stepper driver on COM port #",StepperPort,"..."
+gosub StepperInit
+print "Connecting: LIA on COM port #",LockPort,"..."
+gosub LockInit
+gosub LockGetAll
+gosub LockFlush
+//if Log>0;openp Log$ output #9;print #9,"\n******************************************************"
+send$="\n\n";gosub LockSend
+gosub LockFlush
+
+//agaga:
+//tt=clock();gosub LockGetSignal;tt=clock()-tt
+//print "\n",tt
+//goto agaga
+
+
+LockScale=-1
+LockCurScale=-1
+LockScaleMult=1
+LockSignalUnit$="uV"
+LockSignal$="Lock Signal"
+ExitIt=0
+LockCurSignal=0
+SensitivityMinus=0
+SensitivityPlus=0
+NeedleValue=0
+
+DelayCurPos=0
+DelayCurPos$="0"
+SetOriginButton=0
+GoButton=0
+Moving1=1
+Button10p=0
+Button10m=0
+Button100p=0
+Button100m=0
+Button1000p=0
+Button1000m=0
+ButtonStop=0
+ButtonScan=0
+ButtonMotor=0
+Shutter=0
+ShutterButton=0
+ShutterButton$="Shutter Closed"
+ButtonExit=0
+if debug>1;print "[DelayGet]"
+gosub DelayGet
+if debug>1;print "[gotit]"
+DelayNewPos$=DelayPos
+TTYlockin=0
+Stat$=""
+
+y=5
+h=29
+CONTROL OPEN 0,0,0,0,"Control Pump-Probe",exitIt
+
+CONTROL ADD BUTTON 10,y,40,h,"<",SensitivityMinus
+CONTROL ADD TEXT S=1,55,y+6,35,h-6,"SENS"
+CONTROL ADD BUTTON 95,y,40,h,">",SensitivityPlus
+CONTROL ADD TEXT S=2,150,y+6,49,h-6,"Signal: "
+CONTROL ADD TEXT S=2,200,y+6,60,h-6,LockSignal$
+CONTROL ADD TEXT 262,y+6,30,h-6,LockSignalUnit$
+CONTROL ADD BUTTON 288,y,15,h,"D",TTYlockin
+y=y+h+4
+
+//CONTROL ADD GROUPBOX 3,y,304,h*3+15,Dummy$,db
+
+y=y+7 
+CONTROL ADD TEXT S=2,5,y+6,148,h-6,"Delay line position:"
+CONTROL ADD TEXT S=2,155,y+6,60,h-6,DelayCurPos$
+CONTROL ADD TEXT 235,y+6,20,h-6,"ps"
+CONTROL ADD BUTTON 260,y,40,h,"SET",SetOriginButton
+
+y=y+h
+CONTROL ADD TEXT S=2,5,y+6,148,h-6,"New position:"
+CONTROL ADD EDIT S=2,160,y,65,h,DelayNewPos$,Edit
+CONTROL ADD TEXT 235,y+6,20,h-6,"ps"
+CONTROL ADD BUTTON 260,y,40,h,"GO",GoButton
+
+y=y+h+2
+CONTROL ADD BUTTON 35,y,30,h,"<<<",Button1000m
+CONTROL ADD BUTTON 70,y,30,h,"<<",Button100m
+CONTROL ADD BUTTON 105,y,30,h,"<",Button10m
+CONTROL ADD BUTTON 140,y,55,h,"STOP",ButtonStop
+CONTROL ADD BUTTON 200,y,30,h,">",Button10p
+CONTROL ADD BUTTON 235,y,30,h,">>",Button100p
+CONTROL ADD BUTTON 270,y,30,h,">>>",Button1000p
+
+y=y+h+8
+CONTROL ADD BUTTON 5,y,60,h,"Scan",ButtonScan
+CONTROL ADD BUTTON 70,y,130,h,ShutterButton$,ShutterButton
+CONTROL ADD BUTTON 205,y,50,h,"Setup",ButtonMotor
+CONTROL ADD BUTTON 260,y,40,h,"Exit",ButtonExit
+
+y=y+h+3
+if StatLine>0;control add TEXT x,y,300,h-6,Stat$ 
+CONTROL SHOW
+
+dtc=200	// update all everything 200 ms
+dtn=50	// update needle every 50 ms
+dts=500	// update signal text only every 500 ms
+dtf=5000	// Flush LockIn every 5 seconds
+tc=clock()
+tn=tc
+ts=tc
+tf=tc+dtf
+
+loop:
+if TTYlockin>0;gosub TTYlockin;TTYlockin=0
+//if ButtonExit>0;gosub LockFlush;gosub StepperFlush;close #3;close #4;stop
+if ButtonExit>0;gosub LockFlush;gosub StepperFlush;close #3;close #4; close #9;stop //use for logging
+if SensitivityMinus>0;gosub LockSensDown;SensitivityMinus=0
+if SensitivityPlus>0;gosub LockSensUp;SensitivityPlus=0
+if ButtonStop>0;gosub StepperStop;ButtonStop=0
+if Button1000m>0;DelayNewPos$=DelayNewPos$-Button1000m;Button1000m=0;GoButton=1;
+if Button100m>0;  DelayNewPos$=DelayNewPos$-Button100m*0.1;Button100m=0;GoButton=1;
+if Button10m>0;    DelayNewPos$=DelayNewPos$-Button10m*0.01;Button10m=0;GoButton=1;
+if Button10p>0;     DelayNewPos$=DelayNewPos$+Button10p*0.01;Button10p=0;GoButton=1;
+if Button100p>0;   DelayNewPos$=DelayNewPos$+Button100p*0.1;Button100p=0;GoButton=1;
+if Button1000p>0; DelayNewPos$=DelayNewPos$+Button1000p;Button1000p=0;GoButton=1;
+if GoButton>0;DelayNewPos=DelayNewPos$;gosub DelayGo;GoButton=0;Moving1=1
+if ShutterButton>0;ShutterButton=0;Shutter=abs(Shutter-1);gosub ShutterOpen;ShutterButton$="Shutter Closed";if Shutter=1;ShutterButton$="Shutter Open"
+if ButtonScan>0;ButtonStop=0;ButtonScan=0;gosub Scan;ButtonStop=0;ButtonScan=0
+if ButtonMotor>0;gosub StepperSetup;ButtonMotor=0
+
+if SetOriginButton>0;SetOriginButton=0;inputbox "Set origin","Let this Delay position be (ps) = ",t$,8,ret;
++if ret=1;DelayOrigin=-t$;if DelayOrigin>-1000;if DelayOrigin<20000;gosub DelaySetOrigin;Moving1=1
+
+if clock()>tn;tn=clock()+dtn;gosub UpdateNeedle
+if clock()>ts;ts=clock()+dts;LockSignal$=LockCurSignal*LockSignalMult
+//if Log>0;openp Log$ output #9 // added by Zach
+if clock()>tf;send$="\n\n";gosub LockSend;gosub LockFlush;gosub LockFlush;tf=clock()+dtf
+//close #9 // added by Zach
+if clock()<tc;goto loop
+gosub LockGetScale
+if LockCurScale<>LockScale;gosub UpdateScale;LockCurScale=LockScale
+if Moving1>0;gosub StepperMoving
+if Moving1>0;gosub DelayGet;if DelayPos<>DelayCurPos;DelayCurPos=DelayPos;DelayCurPos$=-DelayPos
+Moving1=Moving
+
+goto loop
+
+// ********* Subroutines for Control Box
+
+// Enable/disable controls while scanning
+EnableControl:
+e=EnableControl
+CONTROL ENABLE SensitivityMinus,e
+CONTROL ENABLE SensitivityPlus,e
+CONTROL ENABLE SetOriginButton,e
+CONTROL ENABLE Edit,e
+CONTROL ENABLE GoButton,e
+CONTROL ENABLE Button1000m,e
+CONTROL ENABLE Button100m,e
+CONTROL ENABLE Button10m,e
+//CONTROL ENABLE ButtonStop,e
+CONTROL ENABLE Button10p,e
+CONTROL ENABLE Button100p,e
+CONTROL ENABLE Button1000p,e
+CONTROL ENABLE ButtonScan,e
+CONTROL ENABLE ShutterButton,e
+CONTROL ENABLE ButtonMotor,e
+CONTROL ENABLE ButtonExit,e
+CONTROL ENABLE TTYLockIn,e
+return
+
+// *** Update scale in VBX according to new LockIn scale
+UpdateScale:
+ if UseVbx=0;return
+          CONTROL VBX g,SET,"ScaleMinValue",-LockScaleSpan
+          CONTROL VBX g,SET,"ScaleMaxValue",LockScaleSpan
+          CONTROL VBX g,SET,"TicStartValue",-LockScaleSpan
+          CONTROL VBX g,SET,"TicStopValue",LockScaleSpan
+          CONTROL VBX g,SET,"TicDeltaValue",LockScaleDelta
+return
+
+// **** Update VBX needle position according to signal
+UpdateNeedle:
+gosub LockGetSignal
+UpdateNeedle1:
+//if LockSignal=LockCurSignal;return
+LockCurSignal=LockSignal
+if LockNeedleTau<=0.0001;NeedleValue=LockCurSignal*LockScaleMult;goto UN1
+ndval=LockCurSignal*LockScaleMult-NeedleValue
+u1=abs(ndval)/LockScaleSpan
+if u1>0.01;u1=(dtn/LockNeedleTau)/u1;if u1<5;ndval=ndval*(1-exp(-u1))		// slow needle reaction
+
+NeedleValue=NeedleValue+ndval
+if NeedleValue>LockScaleSpan;NeedleValue=LockScaleSpan
+if NeedleValue<-LockScaleSpan;NeedleValue=-LockScaleSpan
+//NeedleValue=LockCurSignal*LockScaleMult
+
+UN1:
+if UseVbx=0;return
+          CONTROL VBX g,SET,"NeedleValue",NeedleValue
+return
+
+// *** update needle and signal using LockCurSignal
+UpdateNeedleSignal:
+gosub UpdateNeedle1
+LockSignal$=LockCurSignal*LockSignalMult
+return
+
+// *** Change sensitivity of LockIn
+LockSensDown:
+LockSetScale=LockCurScale+SensitivityMinus
+gosub LockSetScale
+return
+
+LockSensUp:
+LockSetScale=LockCurScale-SensitivityPlus
+gosub LockSetScale
+return
+
+StepperSetup:
+gosub SaveStepperPars
+StepperPortD=StepperPort
+LockPortD=LockPort
+LockSensitivityD=LockSensitivity
+LockNeedleTauD=LockNeedleTau
+StepperDivD=StepperDiv
+StepperLowD=StepperLow
+StepperHighD=StepperHigh
+StepperAccelD=StepperAccel
+StepperDecelD=StepperDecel
+StepperWaitD=StepperWait
+StepperStepD=StepperStep*1000
+DIALOG 0,0,0,0,"Stepper Motor& LockIn Setup:"
+ x=5;y=5;h=29
+ //static x,y+6,150,h-6,"Stepper port = ";  edit x+150,y,65,h,StepperPortD; static x+220,y+6,220,h-6,"(COM port #)"
+ //y=y+h+3
+ static x,y+6,150,h-6,"Divider  K = ";  edit x+150,y,65,h,StepperDivD; static x+220,y+6,220,h-6,"(4, 1...255)"
+ y=y+h+3
+ static x,y+6,150,h-6,"Start speed = ";  edit x+150,y,65,h,StepperLowD; static x+220,y+6,220,h-6,"Hz (600, 57...65000/K)"
+ y=y+h+3
+ static x,y+6,150,h-6,"Max speed = ";  edit x+150,y,65,h,StepperHighD; static x+220,y+6,220,h-6,"Hz (4400, 57...65000/K)"
+ y=y+h+3
+ static x,y+6,150,h-6,"Acceleration = ";  edit x+150,y,65,h,StepperAccelD; static x+220,y+6,220,h-6,"steps (20, 1...255)"
+ y=y+h+3
+ static x,y+6,150,h-6,"Deceleration = ";  edit x+150,y,65,h,StepperDecelD; static x+220,y+6,220,h-6,"steps (10, 1...255)"
+ y=y+h+3
+ static x,y+6,150,h-6,"Low power wait = ";  edit x+150,y,65,h,StepperWaitD; static x+220,y+6,220,h-6,"sec, (0.3, .01...2.5)"
+ y=y+h+3
+ static x,y+6,150,h-6,"Stepper step = ";  edit x+150,y,100,h,StepperStepD; static x+255,y+6,100,h-6,"fsec (1/3) "
+ y=y+h+3
+ static x,y+6,150,h-6,"LockIn Sens.= ";  edit x+150,y,100,h,LockSensitivityD; static x+255,y+6,100,h-6,"udA/V"
+ y=y+h+3
+ static x,y+6,150,h-6,"Needle Tau = ";  edit x+150,y,65,h,LockNeedleTauD; static x+220,y+6,220,h-6,"ms (250 is OK)"
+ y=y+h+3
+ button x,y,100,h,"SET",SetMotorDialog
+ button x+200,y,100,h,"Cancel",CancelMotorDialog
+ //x=x+400
+ //y=5
+ //static x,y+6,150,h-6,"LockIn port = ";  edit x+140,y,65,h,LockPortD; static x+210,y+6,,h-6,"(COM port #)"
+ //y=y+h+3
+ //static x,y+6,150,h-6,"Sensitivity = ";  edit x+140,y,65,h,LockSensitivityD; static x+210,y+6,220,h-6,"udA/V"
+ end
+ CancelMotorDialog:
+ return
+
+ SetMotorDialog:
+LockNeedleTau=LockNeedleTauD
+StepperPort=StepperPortD
+LockPort=LockPortD
+LockSensitivity=LockSensitivityD
+StepperDiv=StepperDivD
+StepperLow=StepperLowD
+StepperHigh=StepperHighD
+StepperAccel=StepperAccelD
+StepperDecel=StepperDecelD
+StepperWait=StepperWaitD
+StepperStep=StepperStepD/1000
+gosub SaveStepperPars
+gosub StepperSetPars
+return
+
+SaveStepperPars:
+openp "PprobeMhzStepperPars.cfg" output #1
+if result<>0;print "Cannot open PprobeMhzStepperPars.cfg for saving\n";return
+print #1,"Stepper Port = ",StepperPort,"\nLockIn Port = ",LockPort
+print #1,"\nK=",StepperDiv,"\nlow=",StepperLow,", high=",StepperHigh
+print #1,"\nAccel=",StepperAccel,", Decel=",StepperDecel
+print #1,"\nWait=",StepperWait
+print #1,"\nStep=",StepperStep
+print #1,"\nLockIn Sensitivity=",LockinSensitivity
+print #1,"\nLockin Needle Reaction Tau= ",LockNeedleTau
+print #1,"\n"
+close 1
+return
+
+LoadStepperPars:
+openp "PprobeMhzStepperPars.cfg" input #1
+if result<>0;print "Cannot open PprobeMhzStepperPars.cfg for reading\n";return
+print #1,?StepperPort,?LockPort
+print #1,?StepperDiv,?StepperLow,?StepperHigh
+print #1,?StepperAccel,?StepperDecel
+print #1,?StepperWait
+print #1,?StepperStep
+print #1,?LockinSensitivity
+print #1,?LockNeedleTau
+close 1
+return
+
+
+// *** If someone closes CONTROL window
+ExitIt: ExitIt=1;return
+
+// **************** Initializing: select COM ports
+SelectComPort:
+gosub LoadStepperPars
+StepperPortD=StepperPort
+LockPortD=LockPort
+DIALOG 0,0,0,0,"Stepper Motor& LockIn Communication Ports:"
+ x=5;y=5;h=29
+static x,y+6,400,h-6,"Confirm COM port number connections";
+y=y+h+3
+ button x,y,250,h*3+8,"Use last setting",CancelPortDialog
+ static x+270,y+6,130,h-6,"Stepper port ";  edit x+400,y,45,h,StepperPortD
+y=y+h+3
+ static x+270,y+6,130,h-6,"LockIn port ";  edit x+400,y,45,h,LockPortD
+y=y+h+5
+ button x+270,y,175,h, "Set new",SetPortDialog
+end
+
+
+ CancelPortDialog:
+ return
+
+SetPortDialog:
+StepperPort=StepperPortD
+LockPort=LockPortD
+gosub SaveStepperPars
+return
+
+
+// ******* Scanning Routine *********
+
+Scan:
+x=5;y=5;h=29
+DIALOG 0,0,0,0,"Scan setup:"
+ static x,y,200,h,"X-axis scan param:"
+ y=y+h+3
+ static x,y+6,70,h-6,"From"; static x+75,y+6,60,h-6,"Step"; static x+140,y+6,60,h-6,"Time"
+ y=y+h+3
+ for i=1,ScanFs
+    edit x,y,70,h,ScanF(i);  edit x+75,y,60,h,ScanS(i);  edit x+140,y,60,h,ScanT(i)
+    y=y+h+3
+    next
+  edit x,y,70,h,ScanTo; static x+75,y+6,130,h-6,"<-Stop here"
+y=y+h+3
+ 
+CheckBox x,y,290,h,"Use X-template instead from:",UseTemplate
+edit x+295,y,60,h,xTemplate
+y=y+h+3
+static x,y+6,300,h-6,"Scan title/comment:"
+y=y+h+1
+edit x,y,620,h,ScanComment$
+y=y+h+7
+button x,y,340,h,"Acquire Data",DialogScanButton
+button x+350,y,150,h,"Info",DialogInfoButton
+button x+520,y,100,h,"Cancel",DialogCancelButton
+
+x=x+250
+y=5
+static x,y,125,h,"Acquisition:"
+y=y+h+3
+static x,y+6,160,h-6,"deltaA signal:"; 
+static x+200,y+6,165,h-6,"Instrument signal"; 
+
+y=y+h+3
+static x,y+6,100,h-6,"Spectrum=";  edit x+105,y,60,h,ScanSpecDA
+static x+200,y+6,100,h-6,"Spectrum=";  edit x+200+105,y,60,h,ScanSpecInstr
+y=y+h+3
+static x,y+6,90,h-6,"Divide";  list x+75,y,95,h*5,"None|X1*X2|X1*X1|X2*X2",DAdiv
+static x+200,y+6,90,h-6,"Divide";  list x+200+75,y,95,h*5,"None|X1*X2|X1*X1|X2*X2",InstrDiv
+
+y=y+h+5
+CheckBox x,y,300,h,"Normalize both to <Divide>",SpecNorm
+
+y=y+h+20
+static x,y+6,240,h-6,"Average Background = "; edit x+215,y,60,h,AccuBack; static x+280,y+6,40,h-6,"sec"
+static x,y+h,320,h-6,"(Set to 0 to omit bkg subtraction)"
+y=y+h+h+6
+static x+180,y+6,120,h-1,"Save X1 into "; edit x+200+105,y,60,h,ScanSpecX1
+y=y+h+3
+static x+180,y+6,120,h-1,"Save X2 into "; edit x+200+105,y,60,h,ScanSpecX2
+
+end
+
+DialogCancelButton:
+gosub LoadScanPars
+return
+
+DialogScanButton:
+gosub SaveScanPars
+gosub MakeScanX
+if len<0;goto Scan; //MessageBox "Scan parameter error","xTemplate spectrum # out of range, cannot do!",0;goto Scan
+if len>10000;MessageBox "Scan parameter error","Spectrum will have >10000 points, cannot do!",0;goto Scan
+if len<4;MessageBox "Scan parameter error","Spectrum will have less than 4 points, cannot do!",0;goto Scan
+if ScanSpecDA<1;MessageBox "Scan parameter error","dA Spectrum # out of range!",0;goto Scan
+if ScanSpecDA>Amount;MessageBox "Scan parameter error","dA Spectrum # out of range!",0;goto Scan
+if ScanSpecInstr<0;MessageBox "Scan parameter error","Intrument Spectrum # out of range!",0;goto Scan
+if ScanSpecInstr>AMOUNT;MessageBox "Scan parameter error","Intrument Spectrum # out of range!",0;goto Scan
+
+if ScanSpecX1>Amount;ScanSpecX1=0
+if ScanSpecX1<1;ScanSpecX1=0
+if ScanSpecX2>Amount;ScanSpecX2=0
+if ScanSpecX2<1;ScanSpecX2=0
+
+spec1=ScanSpecDA;
+len1=0;len1=len
+setx spec1,AcqX
+spec2=ScanSpecInstr
+spectra spec2=spec1
+
+if ScanSpecX1>0;spec3=ScanSpecX1;spectra spec3=spec1
+if ScanSpecX2>0;spec4=ScanSpecX2;spectra spec4=spec1
+
+print "\nAccumulating into ",spec1," and ",spec2,", channels=",len1
+
+EnableControl=0;gosub EnableControl
+
+//get background
+
+xpos=Specx1(1)
+DelayNewPos=xpos;DelayNewPos$=xpos;gosub DelayGo
+print "\nMoving to starting position ",DelayNewPos
+
+
+if AccuBack<=0;AccuT=0;AcqSb=0;Acq1b=0;Acq2b=0;Acq3b=0;print "\nNo Background selected";goto SKIPBACK
+  print "\nClose Shutter and wait 3 seconds..."
+  Shutter=0;gosub ShutterOpen;ShutterButton$="Shutter Closed"
+  tw=clock()+3000	// wait 3 seconds: note - set time RC to 0.3 seconds
+  waitb1:  if clock()<tw;if ButtonStop=0;goto waitb1
+  if ButtonStop>0;return
+  // measure background with closed shutter for AccuBack seconds 
+  print "\nMeasuring background for ",AccuBack," seconds..."
+  AccuT=AccuBack; gosub Accumulate
+  AcqSb=AcqS
+  Acq1b=Acq1
+  Acq2b=Acq2
+  Acq3b=Acq3
+  print "\done, background = ",AcqSb,", ",Acq1,", ",Acq2,", ",Acq3
+
+SKIPBACK:
+print "\nOpen shutter and wait 3 seconds"
+Shutter=1;gosub ShutterOpen;ShutterButton$="Shutter Open"
+tw=clock()+3000	// wait at least 3 seconds!
+
+SpecNormDA=1	// normalize
+SpecNormInstr=1
+AverX1=0
+AverX2=0
+chan=1
+//if Log>0;openp Log$ output #9;print #9,"\n******************************************************"
+newchan:
+  xpos=Specx1(chan)
+  if chan>1;DelayNewPos=xpos;DelayNewPos$=xpos;gosub DelayGo
+  print "\nChannel ",chan," at ",xpos," ps..."
+     wait1:
+     if clock()<tw;if ButtonStop=0;goto wait1
+     gosub StepperFlush
+     gosub StepperMoving
+     gosub DelayGet;DelayCurPos$=-DelayPos
+     if Moving>0;tw=clock()+20;goto wait1
+  if Log=10;print #9,"\n*** CHAN=",chan,"  X=",xpos;Log=10
+  AccuT=AcqT(chan)
+  print "averaging"
+  gosub Accumulate
+  AcqS=AcqS-AcqSb
+  Acq1=Acq1-Acq1b
+  Acq2=Acq2-Acq2b
+  Acq3=Acq3-Acq3b
+  print "\n   [",m,"pts] ",AcqS,", ",Acq1,", ",Acq2,", ",Acq3
+     InstrDivK=1
+  if InstrDiv=2;InstrDivK=Acq1*Acq2
+  if InstrDiv=3;InstrDivK=Acq1*Acq1
+  if InstrDiv=4;InstrDivK=Acq2*Acq2
+  InstrDivK=abs(InstrDivK)
+  if InstrDivK<1e-10;InstrDivK=1
+     DAdivK=1
+  if DAdiv=2;DAdivK=Acq1*Acq2
+  if DAdiv=3;DAdivK=Acq1*Acq1
+  if DAdiv=4;DAdivK=Acq2*Acq2
+  DAdivK=abs(DAdivK)
+  if DAdivK<1e-10;DAdivK=1
+  
+  if chan=1;if SpecNorm>0;SpecNormDA=DAdivK;SpecNormInstr=InstrDivK
+
+
+  //Spec1(chan)=AcqS/DAdivK*SpecNormDA*LockSensitivity
+  Spec1(chan) = AcqS
+  Spec2(chan)=Acq3/InstrDivK*SpecNormInstr
+  if ScanSpecX1>0;spec3(chan)=Acq1
+  if ScanSpecX2>0;spec4(chan)=Acq2
+  AverX1=AverX1+Acq1
+  AverX2=AverX2+Acq2
+  refresh
+  chan=chan+1
+  if chan<=len1;if ButtonStop=0;goto newchan 
+chan=chan-1	// last channel!
+AverX1=AverX1/chan
+AverX2=AverX2/chan
+if chan<len1;len1=chan;len2=chan  
+EnableControl=1;gosub EnableControl
+com$="\nLockIn sensitivity = ",LockSensitivity
+if UseTemplate>0;com$=com$,"\nX set by template",xTemplate,"\nChannel averaging = ",AcqT(1)," seconds"
+if UseTemplate=0;com$=com$,"\nX Scanning break points:";for i=1,ScanFs;com$=com$,"\nX=",ScanF(i)," Step=",ScanS(i)," T=",ScanT(i);next
+com$=com$,"\nBkgnd(",AccuBack,"s): ",AcqSb,",",Acq1b,",",Acq2b,",",Acq3b
+com$=com$,"\nAverages: X1=",AverX1,", X2=",AverX2
+comment1$=ScanComment$,"\nNormalized = ",DAdivK,com$
+comment2$="INSTR: ",ScanComment$,"\nNormalized = ",InstrDivK,com$
+if ScanSpecX1>0;comment3$="X1: ",ScanComment$,com$
+if ScanSpecX2>0;comment3$="X2: ",ScanComment$,com$
+refresh
+Shutter=1;gosub ShutterOpen;ShutterButton$="Shutter Open"
+DelayNewPos=0;DelayNewPos$=0;gosub DelayGo;Moving1=1
+//if Log>0;close #9
+return
+
+// *** support scan
+DialogInfoButton:
+gosub MakeScanX
+msg$="There will be ",len," points\r\nAcquisition time about ",floor(TotalTime/6+.5)/10," + ",floor(TotalTime1/6+.5)/10," minutes" 
+MessageBox "Scan Info",msg$,0
+goto Scan
+return
+
+Accumulate:
+  m=floor(AccuT*4)
+  AcqS=0;Acq1=0;Acq2=0;Acq3=0
+  // take every 250 ms m times (one read of 4 numbers takes 220 ms)
+  dtw_ls=100
+  if LockSlow=1;dtw_ls=250
+  tw=clock()+dtw_ls
+  m=floor(AccuT*1000/dtw_ls)
+  if m<1;m=1
+  mm=0
+  gosub LockFlushFast
+  send$="\n"
+  gosub LockSend;gosub LockFlush
+ACC1:
+    ACCwait:if clock()<tw;if ButtonStop=0;goto ACCwait
+    tw=clock()+dtw_ls
+    if LockSlow=1;gosub LockGetAll1
+    if LockSlow=0;gosub LockGetAll
+    LockCurSignal=LockSignal
+    if Log=10;print #9,"\nQ=",LockSignal," X=",LockX1,",",LockX2,",",LockX3,", T=",clock()+dtw_ls-tw
+    Stat$="RD",mm,":",LockSignal,",",LockX1,",",LockX2,",",LockX3," (",clock()+dtw_ls-tw,")"
+    if clock()>ts;ts=clock()+dts;LockSignal$=LockCurSignal*LockSignalMult
+    gosub UpdateNeedle1
+    LockSignal$=LockCurSignal*LockSignalMult
+    AcqS=AcqS+LockSignal
+    Acq1=Acq1+LockX1
+    Acq2=Acq2+LockX2
+    Acq3=Acq3+LockX3
+    mm=mm+1
+    if mm>=m; goto ACC2
+    if ButtonStop>0;goto ACC2 
+    goto ACC1
+  ACC2:
+    AcqS=AcqS/m
+    Acq1=Acq1/m
+    Acq2=Acq2/m
+    Acq3=Acq3/m
+return
+
+MakeScanX:
+if useTemplate=0;goto MSX0
+  Len=-1
+  if xTemplate<0;MessageBox "Scan parameter error","X-Template Spectrum # out of range!",0;return
+  if xTemplate<0;MessageBox "Scan parameter error","X-Template Spectrum # out of range!",0;return
+  spec0=xTemplate
+  Len=len0
+  if Len<1;return
+  dim AcqX(len),AcqT(len)
+  t=ScanT(1)
+  for i=1,len0
+    AcqX(i)=specx0(i)
+    AcqT(i)=t
+    next
+  TotalTime=len*t
+  TotalTime1=AcqX(len)-AcqX(1)
+  return
+MSX0:
+Sta=ScanF(1);Ste=ScanS(1)
+Len=0
+for i=2,ScanFs
+  if ScanS(i)<=0;goto MSX1
+  if ScanT(i)<=0;goto MSX1
+  if ScanF(i)<Sta;goto MSX1
+  len=len+(ScanF(i)-Sta)/Ste+1
+  //print "\ni=",i,"   len=",len
+  Sta=ScanF(i)
+  Ste=ScanS(i)
+  MSX1:
+  next
+if ScanTo>Sta;len=len+(ScanTo-Sta)/Ste+1
+//print "\nFinal=",len,"\n"
+if len>10000;return
+if len<4;return
+dim AcqX(len),AcqT(len)
+x=ScanF(1)
+t=ScanT(1)
+s=ScanS(1)
+k=2
+i=1
+MSX2:
+  if k>ScanFs;goto MSX3
+  if ScanT(k)<=0;k=k+1;goto MSX2
+  if ScanS(k)<=0;k=k+1;goto MSX2
+  if x>=ScanF(k);s=ScanS(k);t=ScanT(k);k=k+1;goto MSX2
+  AcqX(i)=x
+  AcqT(i)=t
+  i=i+1
+  x=x+s
+  if i<len;if x<=ScanTo;goto MSX2
+MSX3:
+  if x>ScanTo;goto MSX4
+  if i>len;goto MSX4
+  AcqX(i)=x
+  AcqT(i)=t
+  x=x+s
+  i=i+1
+  goto MSX3
+MSX4:
+  len=i-1
+  dim AcqX(len),AcqT(len)
+  TotalTime=0
+  for i=1,len
+   //print "\n",i,": ",AcqX(i),",  ",AcqT(i)
+   TotalTime=TotalTime+AcqT(i)
+   next
+   TotalTime1=AcqX(len)-AcqX(1)
+return
+
+SaveScanPars:
+openp "PprobeMhzScanPars.cfg" output #1
+if result<>0;print "Cannot open PprobeMhzScanPars.cfg for saving\n";return
+print #1,"ScanTo=",ScanTo
+print #1,"\nScanFs=",ScanFs
+print #1,"\nDivs=",DAdiv,",",InstrDiv
+print #1,"\nUseTemplate=",UseTemplate,",",xTemplate
+print #1,"\nScanSpecs=",ScanSpecDA,",",ScanSpecInstr
+for i=1,ScanFs
+ print #1,"\nScanF=",ScanF(i),",",ScanS(i),",",ScanT(i)
+ next
+print #1,"\nAccuBack=",AccuBack,", Normalize=",SpecNorm
+//print "\n\n\nScanCommentL=",ScanComment$(0),"     "
+print #1,"\n",ScanComment$
+print #1,"\n"
+close 1
+return
+ScanPars:
+return
+
+LoadScanPars:
+openp "PprobeMhzScanPars.cfg" input #1
+if result<>0;print "Cannot open PprobeMhzScanPars.cfg for loading\n";return
+print #1,?ScanTo,?ScanFs,?DAdiv,?InstrDiv,?UseTemplate,?xTemplate
+print #1,?ScanSpecDA,?ScanSpecInstr
+for i=1,ScanFs
+ print #1,?ScanF(i),?ScanS(i),?ScanT(i)
+ next
+print #1,?AccuBack,?SpecNorm
+print #1,?ScanComment$
+close 1
+return
+
+
+// ********************** stuff
+u=0
+DelayNewPos=0
+gosub delayGo
+print ?x
+again:
+u=u+1
+gosub DelayGo
+gosub DelayGet
+gosub StepperMoving
+print "\n",u,":",DelayPos,"  ",Moving
+//gosub LockGetS
+//print "\n  S=",LockSignal//,",",x1,",",X2,",",x3
+goto again
+
+print "\nGoto: ",?DelayNewPos
+gosub DelayGo
+gosub DelayGet;print "{",DelayPos,"}"
+gosub StepperMoving;print "(",Moving,")"
+gosub LockGetAll
+print "  S=",LockSignal,",",x1,",",X2,",",x3
+goto again
+stopp
+
+// ************************************************************************************
+// ******************* Lock In control
+// ************************************************************************************
+// **** Open port and initialize
+LockInit:
+parity$="NONE";flow$="DTRDSR"
+opencom LockPort,9600,8,1,parity$,flow$ as #4
+if result<>0;print "\nconnection failed at 'opencom' level! press enter...",?x,"\n";stopp
+print "\nConnection to LIA opened."
+print "\nInitializing communication with LIA.\n"
+print "Flushing buffer...\n"
+gosub LockFlush
+print "Sending request...\n"
+send$="\n\n"
+gosub LockSendR
+print "Flushing...\n"
+gosub LockFlush
+LockWait=0
+gosub LockSetWait
+print "Done\n\n"
+return
+
+// *************** Send string SEND$ to locker
+LockSend:
+gosub LockFlushFast
+if debug>0;print "\nTo LockIn: [",send$,"]"
+print #4,send$,"\n"
+if Log=10;print #9,"\nSend$=",Send$
+return
+
+// *************** Send string SEND$ to locker and receives answer into LG$
+LockSendR:
+gosub LockSend
+gosub LockGet
+return
+
+// ************** receives one line from LockIn, strips CRLF at end
+LockGet:
+LG$="                                                                                                                                     "; //buffer
+k=0
+t=clock()+250	// wait no more than 250 ms for each symbol
+LG1:
+   f=filelen(4)
+   if f>0;load #4,unsigned1,a;k=k+1;LG$(k)=a;t=clock()+250;if a<>13;goto LG1
+   if f<1;if clock()<t;goto LG1
+LG$(k+1)=0
+if LG$(k)=10;LG$(k)=0
+if LG$(k-1)=13;LG$(k-1)=0
+if debug>0;print "\nFrom LockIn: [",LG$,"]"
+if Log=10;print #9," {",LG$,"}"
+return
+
+// ************ Get lockin frequency into LockF
+LockGetF:
+send$="F"
+gosub LockSendR
+LockF=LG$
+return
+
+//************ Get lockIn signal into LockSignal
+LockGetSignal:
+send$="Q"
+gosub LockSendR
+LockSignal=LG$
+return
+
+// *************** Set lockin wait interval for chars in LockWait*4 ms (default 6)
+LockSetWait:
+send$="W",LockWait
+gosub LockSend
+return
+
+// **************** Flush LockIn receiver buffer in case there is junk
+LockFlush:
+t=clock()+5	// wait no more than 5 ms for each symbol
+LF1:
+   f=filelen(4)
+   if f>0;load #4,unsigned1,a;t=clock()+5;goto LF1
+   if clock()<t;goto LF1
+return
+
+// **************** Flush LockIn receiver buffer in case there is junk
+LockFlushFast:
+LFF1:
+   f=filelen(4)
+   if f>0;load #4,unsigned1,a;goto LF1;;goto LFF1
+return
+
+// **************** Flush LockIn receiver buffer in case there is junk
+LockFlushLong:
+t=clock()+20	// wait no more than 20 ms for each symbol
+LFL1:
+   f=filelen(4)
+   if f>0;load #4,unsigned1,a;t=clock()+20;goto LFL1
+   if clock()<t;goto LFL1
+return
+
+//************ get lockIn Signal, X1, X2 and X3 inputs with error detection
+LockGetAll:
+LGAn=0
+LockGetAllagain:
+LGAe=0
+send$="Q;X1;X2;X3"
+gosub LockSendR
+LockSignal=LG$
+LGAe=LG$(0)
+gosub LockGet;LockX1=LG$;LGAe=LGAe*LG$(0)
+gosub LockGet;LockX2=LG$;LGAe=LGAe*LG$(0)
+gosub LockGet;LockX3=LG$;AGAe=LGAe*LG$(0)
+if LGAe>0;return
+print "\n#### LockIn response error, correcting ",LGAn
+// error detected: did not get data! Repeat
+if Log=10;print #9,"\n########### Error! Correcting ",LGAn," #############\n"
+if LGAn>5;return	// enough is enough!
+LGAn=LGAn+1
+gosub LockFlush
+send$="\n\n";gosub LockSend
+gosub LockFlushLong
+goto LockGetAllagain
+return
+
+LockGetAll1:
+gosub LockGetSignal
+send$="X1"
+gosub LockSendR
+LockX1=LG$
+send$="X2"
+gosub LockSendR
+LockX2=LG$
+send$="X3"
+gosub LockSendR
+LockX3=LG$
+return
+
+
+////************ Get lockIn scale into LockScale
+LockGetScale:
+gosub LockFlush
+send$="G"
+gosub LockSendR
+lg=lg$
+if lg=0;return
+LockScale=LG$
+i=LockScale
+x1=10;x2=1e9;x3=1e9;x$="nV"
+
+if i=1;  x1=10;  x2=1e9;  X3=1e9;  x$="nV";goto LGS1	//10 nV
+if i=2;  x1=2;    x2=1e8;  X3=1e9;  x$="nV";goto LGS1	// 20 nV
+if i=3;  x1=5;    x2=1e8;  X3=1e9;  x$="nV";goto LGS1	// 50 nV
+if i=4;  x1=10;  x2=1e8;  X3=1e9;  x$="nV";goto LGS1	// 100 nV
+if i=5;  x1=2;    x2=1e7;  X3=1e9;  x$="nV";goto LGS1	// 200 nV
+if i=6;  x1=5;    x2=1e7;  X3=1e9;  x$="nV";goto LGS1	// 500 nV
+if i=7;  x1=10;  x2=1e7;  X3=1e6;  x$="uV";goto LGS1	// 1 uV
+if i=8;  x1=2;    x2=1e6;  X3=1e6;  x$="uV";goto LGS1	// 2 uV
+if i=9;  x1=5;    x2=1e6;  X3=1e6;  x$="uV";goto LGS1	// 5 uV
+if i=10;x1=10;  x2=1e6;  X3=1e6;  x$="uV";goto LGS1	// 10 uV
+if i=11;x1=2;    x2=1e5;  X3=1e6;  x$="uV";goto LGS1	// 20 uV
+if i=12;x1=5;    x2=1e5;  X3=1e6;  x$="uV";goto LGS1	// 50 uV
+if i=13;x1=10;  x2=1e5;  X3=1e6;  x$="uV";goto LGS1	// 100 uV
+if i=14;x1=2;    x2=1e4;  X3=1e6;  x$="uV";goto LGS1	// 200 uV
+if i=15;x1=5;    x2=1e4;  X3=1e6;  x$="uV";goto LGS1	// 500 uV
+if i=16;x1=10;  x2=1e4;  X3=1e3;  x$="mV";goto LGS1	// 1 mV
+if i=17;x1=2;    x2=1e3;  X3=1e3;  x$="mV";goto LGS1	// 2 mV
+if i=18;x1=5;    x2=1e3;  X3=1e3;  x$="mV";goto LGS1	// 5 mV
+if i=19;x1=10;  x2=1e3;  X3=1e3;  x$="mV";goto LGS1	// 10 mV
+if i=20;x1=2;    x2=1e2;  X3=1e3;  x$="mV";goto LGS1	// 20 mV
+if i=21;x1=5;    x2=1e2;  X3=1e3;  x$="mV";goto LGS1	// 50 mV
+if i=22;x1=10;  x2=1e2;  X3=1e3;  x$="mV";goto LGS1	// 100 mV
+if i=23;x1=2;    x2=1e1;  X3=1e3;  x$="mV";goto LGS1	// 200 mV
+if i=24;x1=5;    x2=1e1;  X3=1e3;  x$="mV";goto LGS1	// 500 mV
+LGS1:
+LockScaleSpan=x1
+LockScaleMult=x2
+LockSignalUnit$=x$
+LockSignalMult=X3
+if LockScaleSpan=10;LockScaleDelta=2
+if LockScaleSpan=2;LockScaleDelta=0.5
+if LockScaleSpan=5;LockScaleDelta=1
+return
+
+// *********** Set sensitivity to LockSetScale =4...24
+LockSetScale:
+if LockSetScale<4;LockSetScale=4
+if LockSetScale>24;LockSetScale=24
+send$="G",LockSetScale
+gosub LockSend
+return
+
+// ************************************************************************************
+// ********************* The commands to control delay line in ps units ***********
+// ************************************************************************************
+
+// ****** Shutter open or close (Shutter=1 or 0)
+ShutterOpen:
+send$="A",8*Shutter
+gosub SendStepper
+return
+
+// ******* Stop delay line
+DelayStop:
+gosub StepperStop
+return
+
+// ******* Check if delay line is Moving, (Moving=1 - moving, Moving=0 - stopped)
+DelayMoving:
+gosub StepperMoving
+return 
+
+// *******Go to DelaynewPos in picoseconds
+DelayGo:
+gosub StepperStop
+StepperNewPos=-floor(DelayNewPos/StepperStep)
+gosub StepperGo
+return
+
+// ******* Get current delay position in picoseconds (to nearest femtosecond)
+DelayGet:
+gosub StepperGetPos
+DelayPos=floor(StepperPos*StepperStep*1000+.5)/1000
+return
+
+// ****** Set current position of delay line to be DelayOrigin in ps (without moving)
+DelaySetOrigin:
+StepperOrigin=DelayOrigin/StepperStep
+gosub StepperSetOrigin
+return
+
+
+// ************************************************************************************
+// ********************* The commands to control stepper in native units ***********
+// *********************************************************************************
+
+// *************** Initialize stepper driver. Must do at least once
+StepperInit:
+parity$="NONE";flow$="DTRDSR"
+opencom StepperPort,9600,8,1,parity$,flow$ as #3
+if result<>0;print "\nconnection failed at 'opencom' level! press enter...",?x,"\n";stopp
+print "\nConnection to stepper opened."
+print "\nInitializing communication with stepper.\n"
+send$=" ";gosub SendStepper	// initialize connection
+// get 4 lines of answer
+print "...\n"
+gosub GetStepper
+print "...\n"
+gosub GetStepper
+print "...\n"
+gosub GetStepper
+print "...\n"
+gosub GetStepper 
+print "...\n"
+gosub StepperSetPars
+print "Done\n\n"
+return
+
+// ************* Initialize scanning parameters: must do if changing scan speeds
+// ************ Initialize function will call this as well
+StepperSetPars:
+send$="l1";gosub SendStepperR				// set limits to normally ground
+send$="E",floor(StepperWait*100);gosub SendStepperR	// set power-low delay in 10 ms intervals
+StepperDiv=floor(StepperDiv)
+if StepperDiv<1;StepperDiv=1
+if StepperDiv>1255;StepperDiv=255
+StepperDiv=floor(StepperDiv)
+send$="D",StepperDiv;gosub SendStepperR			// set divider
+if StepperLow*StepperDiv>65500;StepperLow=65500/StepperDiv
+if StepperLow*StepperDiv<56;StepperLow=56/StepperDiv+1
+StepperLow=floor(StepperLow)
+send$="I",StepperLow*StepperDiv;gosub SendStepperR	// set lbeginning stepper speed
+if StepperHigh*StepperDiv>65500;StepperHigh=65500/StepperDiv
+if StepperHigh*StepperDiv<56;StepperHigh=56/StepperDiv+1
+StepperHigh=floor(StepperHigh)
+send$="V",StepperHigh*StepperDiv;gosub SendStepperR	// set high speed
+if StepperAccel<1;StepperAccel=0
+if StepperAccel>255;StepperAccel=255
+if StepperDecel<1;StepperDecel=0
+if StepperDecel>255;StepperDecel=255
+send$="K",StepperAccel," ",StepperDecel;gosub SendStepperR	// set high speed
+send$="X";gosub SendStepperR
+return
+
+// **************** Send string SEND$ to a stepper controller and receive answer into SR$
+SendStepperR:
+gosub SendStepper
+gosub GetStepper
+return
+
+// *************** Send string SEND$ to a stepper, does not wait for answer (just for echo)
+SendStepper:
+if debug>0;print "\nTo stepper: [",send$,"]"
+for i=1,send$(0)
+  char=send$(i)
+  gosub SendStepperChar
+  next
+if send$(1)<>32;print #3,"\n"
+return
+
+// ************** Sends one CHAR to stepper and receives echo of char back (waits 30 ms for response or skips)
+SendStepperChar:
+print #3,%char
+t=clock()+300	// wait 30 ms for response, if none - just quit
+waitStepperChar:
+if clock()<t;if filelen(3)<1;goto waitStepperChar
+if filelen(3)>0;load #3,unsigned1,a;if debug>1;print "[",%a,"|",a,"]"
+return
+
+// ************** receives one line from Stepper controller into SR$, strips CRLF at end and replaces 0 chars with spaces
+GetStepper:
+SR$="                                                                                                                                                                                                           "; //buffer
+k=0
+t=clock()+300	// wait no more than 100 ms for each symbol
+SR1:
+   f=filelen(3)
+   if f>0;load #3,unsigned1,a;k=k+1;gosub checka;SR$(k)=a;t=clock()+100;if a<>10;goto SR1
+   if f<1;if clock()<t;goto SR1
+SR$(k+1)=0
+if SR$(k)=10;SR$(k)=0
+if SR$(k-1)=13;SR$(k-1)=0
+if debug>0;print "\nFrom Stepper: [",SR$,"]"
+if log=10;print #9 "Received: ",SR$,"\n"
+if SR$(1)=90;SR$(1)=0
+return
+
+// **** function for routine above (replace 0 with space), controller sends 0 char before each number!
+checka:
+if a=0;a=32
+return
+
+// ********* Flush input buffer from controller, just in case there is junk 
+StepperFlush:
+t=clock()+5	// wait no more than 5 ms for each symbol
+SF1:
+   f=filelen(3)
+   if f>0;load #3,unsigned1,a;goto SF1
+   if clock()<t;goto SF1
+return
+
+// ********** Go to StepperNewPos in native coordinates
+StepperGo:
+gosub StepperFlush
+send$="R",floor(StepperNewPos);gosub SendStepperR
+gosub GetStepper
+return
+
+// ********* Gets current position in native coordinates
+StepperGetPos:
+gosub StepperFlush
+send$="Z";gosub SendStepperR
+StepperPos=SR$
+return
+
+// ****** This sets the current position to be StepperOrigin in absolute coordinates
+StepperSetOrigin:
+send$="O",floor(StepperOrigin);gosub SendStepperR
+return
+
+// ********* Check if delay line is moving (Moving<>0 for moving, and =0 when stopped)
+StepperMoving:
+send$="^";gosub SendStepperR
+Moving=SR$
+return
+
+// *********** Stop delay line motion (with deceleration), waits for it to stop but not more than for 1 second
+StepperStop:
+send$="@";gosub SendStepperR
+SST=clock()+1000
+SS1:
+gosub StepperMoving
+if Moving=0;return
+if clock()<SST;goto SS1
+return
+
+
+// ******************
+// DEBUG THE LOCKIN (manual commands):
+TTYlockin:
+print "\n\nCommand line mode for LockIn\nPress ESC to exit\n"
+localecho=1
+again33:
+a=inkey();
+if a=27;return
+if a>0;print #4,%a;if localecho<>0;gosub printa
+if filelen(4)>0;load #4,unsigned1,a;gosub printa;//PRINT "[",A,"]"
+goto again33
+
+PRINTA:
+//print " [",a,"]"
+IF A=13;PRINT "\N";RETURN
+IF A<32;RETURN
+PRINT %A
+RETURN
+
